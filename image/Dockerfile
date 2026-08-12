@@ -52,7 +52,25 @@ RUN npm run build
 
 # ------------------------------------------------------------- binary sources
 FROM supabase/gotrue:${GOTRUE_VERSION} AS gotrue
-FROM postgrest/postgrest:${POSTGREST_VERSION} AS postgrest
+
+# Taken from PostgREST's own release tarballs rather than copied out of their
+# image. The image is built differently per architecture - on amd64 it is a
+# shell-less scratch image with the binary at a different path - so a COPY that
+# works on a Mac fails on the CI runner, which is exactly how this first broke.
+# The x86-64 tarball is fully static, so it needs no libraries at runtime.
+FROM ubuntu:24.04 AS postgrest
+ARG POSTGREST_VERSION
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
+ && case "$TARGETARCH" in \
+      amd64) asset="postgrest-${POSTGREST_VERSION}-linux-static-x86-64.tar.xz" ;; \
+      arm64) asset="postgrest-${POSTGREST_VERSION}-ubuntu-aarch64.tar.xz" ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/pgrst.tar.xz \
+      "https://github.com/PostgREST/postgrest/releases/download/${POSTGREST_VERSION}/${asset}" \
+ && tar -xJf /tmp/pgrst.tar.xz -C /usr/local/bin postgrest \
+ && chmod +x /usr/local/bin/postgrest
 
 # ---------------------------------------------------------------- final image
 FROM base AS runtime
@@ -65,7 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # migrations are plain files it reads at startup and are not embedded.
 COPY --from=gotrue /usr/local/bin/auth /usr/local/bin/gotrue
 COPY --from=gotrue /usr/local/etc/auth/migrations /usr/local/etc/auth/migrations
-COPY --from=postgrest /usr/bin/postgrest /usr/local/bin/postgrest
+COPY --from=postgrest /usr/local/bin/postgrest /usr/local/bin/postgrest
 
 WORKDIR /app
 # `standalone` ships its own trimmed node_modules; static/ and public/ are not

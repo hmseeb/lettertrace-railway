@@ -14,8 +14,22 @@ die() { echo "[lettertrace] FATAL: $*" >&2; exit 1; }
 # ------------------------------------------------------------------ inputs
 [ -n "${DATABASE_URL:-}" ] || die "DATABASE_URL is not set (attach the Postgres service)"
 [ -n "${JWT_SECRET:-}" ]   || die "JWT_SECRET is not set"
-[ -n "${ENCRYPTION_KEY:-}" ] || die "ENCRYPTION_KEY is not set"
 [ "${#JWT_SECRET}" -ge 32 ] || die "JWT_SECRET must be at least 32 characters"
+
+# The at-rest key for the deployer's own AI provider keys must decode to
+# exactly 32 bytes, which is an awkward thing to ask a template variable for -
+# a random string of the right length only decodes to 32 bytes by accident.
+# Hashing any secret down to 32 bytes makes the requirement disappear. An
+# explicit ENCRYPTION_KEY still wins, so a deployment migrated from upstream
+# keeps reading its existing stored keys.
+if [ -z "${ENCRYPTION_KEY:-}" ]; then
+  [ -n "${ENCRYPTION_SECRET:-}" ] || die "set ENCRYPTION_SECRET (or ENCRYPTION_KEY)"
+  ENCRYPTION_KEY="$(node -e '
+    const { createHash } = require("node:crypto");
+    process.stdout.write(createHash("sha256").update(process.env.ENCRYPTION_SECRET).digest("base64"));
+  ')"
+fi
+export ENCRYPTION_KEY
 
 PORT="${PORT:-8080}"
 APP_PORT="${APP_PORT:-3001}"

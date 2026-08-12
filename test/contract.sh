@@ -16,7 +16,9 @@ APP="lt-contract-app"
 PORT=3399
 PGPASS="contract-pg-pass"
 JWT_SECRET="contract-jwt-secret-at-least-32-bytes-long-xxxxx"
-ENCRYPTION_KEY="$(head -c 32 /dev/urandom | base64)"
+# Deliberately an awkward length: the image is supposed to hash whatever it is
+# given down to the 32 bytes the app requires.
+ENCRYPTION_SECRET="contract-encryption-secret"
 
 pass=0; fail=0
 ok()   { echo "  PASS  $1"; pass=$((pass+1)); }
@@ -45,7 +47,7 @@ docker run -d --name "$APP" --network "$NET" -p "$PORT:8080" \
   -e PORT=8080 \
   -e DATABASE_URL="postgresql://postgres:$PGPASS@$PG:5432/railway" \
   -e JWT_SECRET="$JWT_SECRET" \
-  -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  -e ENCRYPTION_SECRET="$ENCRYPTION_SECRET" \
   -e PUBLIC_URL="http://localhost:$PORT" \
   "$IMAGE" >/dev/null 2>&1 || { echo "could not start $IMAGE"; exit 1; }
 
@@ -124,6 +126,21 @@ stolen=$(curl -s -X POST "$BASE/rest/v1/projects" \
   -d '{"name":"Stolen","brand_name":"Stolen","user_id":"00000000-0000-0000-0000-000000000001"}')
 if echo "$stolen" | grep -q "row-level security"; then ok "a write claiming another owner is refused"
 else bad "a write claiming another owner is refused" "$stolen"; fi
+
+# 10. the at-rest key the app actually received decodes to 32 bytes. Read off
+#     the running process rather than recomputed here, because recomputing it
+#     would only re-test the formula against itself. A wrong length here means
+#     every attempt to save an AI provider key fails with a 503 that reads like
+#     the provider rejected it.
+klen=$(docker exec "$APP" node -e '
+  const fs = require("node:fs");
+  for (const p of fs.readdirSync("/proc")) {
+    if (!/^[0-9]+$/.test(p)) continue;
+    let env; try { env = fs.readFileSync(`/proc/${p}/environ`, "utf8"); } catch { continue; }
+    const hit = env.split("\0").find((x) => x.startsWith("ENCRYPTION_KEY="));
+    if (hit) { console.log(Buffer.from(hit.slice(15), "base64").length); break; }
+  }' 2>/dev/null)
+[ "$klen" = "32" ] && ok "the at-rest key decodes to 32 bytes" || bad "the at-rest key decodes to 32 bytes" "got ${klen:-nothing}"
 
 echo
 echo "== $pass passed, $fail failed =="
