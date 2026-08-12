@@ -1,0 +1,110 @@
+{
+  "$schema": "internal build sheet, not a Railway file",
+  "name": "Lettertrace AEO Monitor",
+  "upstream": {
+    "repo": "https://github.com/letterstory/lettertrace",
+    "license": "MIT",
+    "commit": "061bb2d8a027f76e4b51a0969f4c9ca8628bad84",
+    "$note": "Pinned to a commit, not a tag: the project has no releases yet. package.json says 0.1.0, which is why the image tag is 0.1.0-r1 - the -rN suffix is ours, so a packaging fix can ship without pretending upstream moved."
+  },
+
+  "image": {
+    "ref": "ghcr.io/hmseeb/lettertrace-railway:0.1.0-r1",
+    "built_from": "https://github.com/hmseeb/lettertrace-railway",
+    "$note": "Upstream publishes ghcr.io/letterstory/lettertrace but the package is not anonymously pullable (the registry refuses an anonymous pull token), so Railway could not fetch it even if the topology matched. Ours is built from upstream's own Dockerfile plus the bundled auth/data services described below."
+  },
+
+  "topology": {
+    "decision": "Two services: Railway Postgres, and one app container that also runs the accounts service (GoTrue) and the data API (PostgREST) behind an nginx router.",
+    "why_bundled": [
+      "Lettertrace talks to Supabase for exactly two things: accounts/sessions and Postgres reads and writes through supabase-js. Verified against the source - no .storage.from, no .channel, no realtime import anywhere - so Storage and Realtime are omitted rather than bundled unused.",
+      "The key the browser uses is a token SIGNED with the deployment's secret. Railway template variables can generate a random secret but cannot sign anything with it, so the key has to be derived at boot by a process that already holds the secret. That single fact forces the accounts service, the data API and the app into one container: separate services would each need the derived keys, and nothing could hand them over.",
+      "supabase-js builds every URL by appending /auth/v1/... and /rest/v1/... to ONE base, so all three have to answer on one origin. In one container the router proxies to 127.0.0.1, which also sidesteps the stale private-domain proxying that has produced 504s after a redeploy on earlier templates.",
+      "Postgres stays a separate Railway service because the data has to outlive the app container and Railway's own Postgres is better operated than anything bundled."
+    ],
+    "alternative_rejected": "Ask the deployer for their own Supabase project URL and keys, which is what upstream's README does. It is a two-minute setup for someone reading the docs and a dead end for someone who clicked a deploy button, which is the entire audience for a template."
+  },
+
+  "services": [
+    {
+      "name": "Postgres",
+      "image": "ghcr.io/railwayapp-templates/postgres-ssl:17",
+      "$note": "Railway's own Postgres config, copied from template(code:\"postgres\"). PGDATA points at a SUBDIRECTORY of the mount because a volume root contains lost+found and initdb refuses a non-empty directory.",
+      "volume": { "mount": "/var/lib/postgresql/data" },
+      "variables": {
+        "PGDATA": "/var/lib/postgresql/data/pgdata",
+        "PGHOST": "${{RAILWAY_PRIVATE_DOMAIN}}",
+        "PGPORT": "5432",
+        "PGUSER": "${{POSTGRES_USER}}",
+        "PGDATABASE": "${{POSTGRES_DB}}",
+        "PGPASSWORD": "${{POSTGRES_PASSWORD}}",
+        "POSTGRES_DB": "railway",
+        "POSTGRES_USER": "postgres",
+        "POSTGRES_PASSWORD": "${{ secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\") }}",
+        "DATABASE_URL": "postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}",
+        "SSL_CERT_DAYS": "820",
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": "60"
+      }
+    },
+    {
+      "name": "Lettertrace",
+      "image": "ghcr.io/hmseeb/lettertrace-railway:0.1.0-r1",
+      "start_command": null,
+      "$note_start_command": "Deliberately empty. Railway execs a start command raw and DISCARDS the image entrypoint, which is where the whole boot sequence lives. Setting one here would skip the database bootstrap entirely.",
+      "healthcheck": {
+        "path": "/login",
+        "$note": "The one page that renders without a session. Railway rejects any healthcheck path containing a hyphen, and gives no hint that it is the hyphen, so /sign-in style paths are out anyway."
+      },
+      "domain": {
+        "target_port": 8080,
+        "$note": "Pinned explicitly. Railway's port autodetection whiffs on images whose EXPOSE is set from a variable, and the symptom is a healthcheck that says 'service unavailable' while the app logs look perfectly healthy."
+      },
+      "restart_policy": "ON_FAILURE",
+      "variables": {
+        "PORT": {
+          "value": "8080",
+          "$note": "Pinned. Next.js honours PORT and would otherwise drift off the port the domain targets. Here the router owns PORT and the app runs behind it on 3001."
+        },
+        "DATABASE_URL": {
+          "value": "${{Postgres.DATABASE_URL}}",
+          "$note": "Name-based reference, never a service UUID. UUID-keyed references resolve to an empty string after any config regeneration while the deploy still reports success."
+        },
+        "JWT_SECRET": {
+          "value": "${{ secret(64) }}",
+          "$note": "Signs sessions AND is the secret the browser key is derived from. Changing it signs everyone out; it does NOT lose any data."
+        },
+        "ENCRYPTION_SECRET": {
+          "value": "${{ secret(64) }}",
+          "$note": "Hashed to 32 bytes at boot to produce the app's ENCRYPTION_KEY. Asked for as a plain secret because the app requires a key that base64-decodes to EXACTLY 32 bytes, and a random string only satisfies that by accident. Changing it makes every stored AI provider key unreadable."
+        },
+        "CRON_SECRET": {
+          "value": "${{ secret(64) }}",
+          "$note": "The shared secret guarding the scheduled-run endpoint. Generated whether or not the deployer wires up a scheduler, because the endpoint spends their AI provider credit and refusing unauthenticated calls is the only thing standing between it and the internet."
+        }
+      },
+      "variables_deliberately_unset": {
+        "PUBLIC_URL": "Derived at boot from RAILWAY_PUBLIC_DOMAIN. Reading it at runtime rather than baking a reference into config avoids the case where a service deployed before its domain existed bakes in an empty value.",
+        "TRIAL_*": "Free-run keys spend the OPERATOR's AI credit. On a self-hosted deployment the operator is the deployer, and handing their key to anyone who signs up is not a default anybody asked for.",
+        "NEXT_PUBLIC_RB2B_KEY": "A third-party visitor de-anonymisation pixel. Upstream ships it unset for self-hosters and so do we, so a deployment carries zero third-party tracking.",
+        "ADMIN_EMAILS / ADMIN_USER_IDS": "Left empty so the operations screen 404s for everyone, including the deployer, until they name themselves. An allowlisted address nobody has registered can be claimed by whoever guesses it.",
+        "RESEND_API_KEY / ADMIN_ALERT_EMAIL": "Signup alerts need a mail provider account. Off costs nothing and sends nothing.",
+        "OPS_TELEMETRY": "Off. A self-hosted install should record nothing by default."
+      }
+    }
+  ],
+
+  "boot_sequence": {
+    "$note": "Order is load-bearing and each step exists because skipping it produced a specific failure.",
+    "1_platform_bootstrap": "Creates the anon/authenticated/service_role roles, the connection role for the data API, and the account the accounts service connects as. Sets default privileges BEFORE the app schema is created, because the app schema's REVOKE statements assume something already granted.",
+    "2_accounts_service": "Connects as a role whose default schema is auth. Without that its migrations create their enum types in the wrong schema, a later migration asks for one by qualified name, fails, and rolls back - leaving a half-built schema and a 502.",
+    "3_wait_on_health": "Waits for the accounts service to answer, NOT for its tables to appear. A failed migration rolls back only its own step, so the tables can exist while the service is already dead.",
+    "4_auth_helpers": "Replaces the accounts service's own auth.uid() with one that reads both the current and the legacy claim format. Its version reads only the legacy one, which the data API stopped setting by default - the result is a signed-in person seeing an empty dashboard and no error anywhere.",
+    "5_app_schema": "Upstream's schema.sql, which is documented as safe to re-run, so an image upgrade carries a schema upgrade. Must come after step 2 because it hangs a trigger off the accounts table.",
+    "6_serve": "Data API, app, then the router. If any one of the four dies the container exits so Railway restarts it, rather than serving a half-working app."
+  },
+
+  "prompts": [],
+  "$note_prompts": "None. Every secret is generated, and the AI provider key is added from inside the app after sign-in, which is where the app verifies it against the provider anyway. Asking for it at deploy time would mean pasting an unverified key into a form that cannot check it.",
+
+  "telemetry": "None enabled. Nothing leaves the deployment except calls to the AI providers the deployer configures, with the deployer's own key."
+}
