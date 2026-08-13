@@ -5,11 +5,11 @@
     "repo": "https://github.com/letterstory/lettertrace",
     "license": "MIT",
     "commit": "061bb2d8a027f76e4b51a0969f4c9ca8628bad84",
-    "$note": "Pinned to a commit, not a tag: the project has no releases yet. package.json says 0.1.0, which is why the image tag is 0.1.0-r2 - the -rN suffix is ours, so a packaging fix can ship without pretending upstream moved."
+    "$note": "Pinned to a commit, not a tag: the project has no releases yet. package.json says 0.1.0, which is why the image tag is 0.1.0-r3 - the -rN suffix is ours, so a packaging fix can ship without pretending upstream moved."
   },
 
   "image": {
-    "ref": "ghcr.io/hmseeb/lettertrace-railway:0.1.0-r2",
+    "ref": "ghcr.io/hmseeb/lettertrace-railway:0.1.0-r3",
     "built_from": "https://github.com/hmseeb/lettertrace-railway",
     "$note": "Upstream publishes ghcr.io/letterstory/lettertrace but the package is not anonymously pullable (the registry refuses an anonymous pull token), so Railway could not fetch it even if the topology matched. Ours is built from upstream's own Dockerfile plus the bundled auth/data services described below."
   },
@@ -48,7 +48,7 @@
     },
     {
       "name": "Lettertrace",
-      "image": "ghcr.io/hmseeb/lettertrace-railway:0.1.0-r2",
+      "image": "ghcr.io/hmseeb/lettertrace-railway:0.1.0-r3",
       "start_command": null,
       "$note_start_command": "Deliberately empty. Railway execs a start command raw and DISCARDS the image entrypoint, which is where the whole boot sequence lives. Setting one here would skip the database bootstrap entirely.",
       "healthcheck": {

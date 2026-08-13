@@ -95,6 +95,14 @@ if docker exec "$APP" grep -q 'proxy_buffer_size' /etc/nginx/nginx.conf 2>/dev/n
 then ok "router has room for session-sized reply headers"
 else bad "router has room for session-sized reply headers" "proxy_buffer_size missing from nginx.conf"; fi
 
+# 3c. the guard on /dashboard sends a signed-out visitor to THIS deployment.
+#     Next builds middleware redirects from the port it is bound to, never from
+#     the Host header, so unpinned it hands the browser https://localhost:3001
+#     and the login page fails to open on their own machine.
+loc=$(curl -s -o /dev/null -D- "$BASE/dashboard" | grep -i '^location:' | tr -d '\r' | awk '{print $2}')
+case "$loc" in "$BASE"/login*) ok "the signed-out guard redirects to this deployment";;
+                            *) bad "the signed-out guard redirects to this deployment" "sent to $loc";; esac
+
 # 4. a stranger can create an account and is signed in immediately
 EMAIL="contract-$RANDOM@example.com"
 # Taken from the page the browser gets, which is the only place it is published

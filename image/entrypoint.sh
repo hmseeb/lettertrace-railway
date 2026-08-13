@@ -213,12 +213,29 @@ http {
     location /auth/v1/ { proxy_pass http://127.0.0.1:$AUTH_PORT/; }
     location /rest/v1/ { proxy_pass http://127.0.0.1:$REST_PORT/; }
 
+    # The interactive OAuth screens hand the browser back to a CLI's own
+    # loopback address on purpose, so their redirects must be left alone. They
+    # are listed before the catch-all so the rewrite below cannot reach them.
+    location /api/oauth/ { proxy_pass http://127.0.0.1:$APP_PORT; proxy_redirect off; }
+    location /oauth/     { proxy_pass http://127.0.0.1:$APP_PORT; proxy_redirect off; }
+    location /activate   { proxy_pass http://127.0.0.1:$APP_PORT; proxy_redirect off; }
+
     # Everything else is the app, including /auth/callback, which is a Next
     # route and is deliberately not matched by /auth/v1/ above.
     location / {
       proxy_pass http://127.0.0.1:$APP_PORT;
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection "upgrade";
+
+      # Next builds middleware redirect URLs from the address it is bound to
+      # and never from the Host header (next-server.js: \`fetchHostname ||
+      # "localhost"\`), so the guard on /dashboard sends a signed-out visitor to
+      # https://localhost:$APP_PORT/login - their own machine. The app's route
+      # handlers already resolve this themselves; middleware is the one place
+      # that cannot. Pin it back to the public origin on the way out, matching
+      # only this container's own port so a genuine loopback redirect elsewhere
+      # is untouched.
+      proxy_redirect ~^https?://(?:localhost|127\.0\.0\.1):$APP_PORT(/.*)\$ $PUBLIC_URL\$1;
     }
   }
 }
