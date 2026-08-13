@@ -183,6 +183,14 @@ http {
   proxy_read_timeout 600s;
   proxy_send_timeout 600s;
 
+  # A signed-in session is three chunked cookies of ~3.5k each, so both the
+  # Set-Cookie response and every request that carries them back blow past
+  # nginx's 4k/8k header defaults. Unset, the app 502s the moment you log in.
+  proxy_buffer_size 32k;
+  proxy_buffers 8 32k;
+  proxy_busy_buffers_size 64k;
+  large_client_header_buffers 8 32k;
+
   # Railway terminates TLS at its edge, so \$scheme here is http. Trust the
   # header it sets, and fall back to it for direct local runs.
   map \$http_x_forwarded_proto \$fwd_proto {

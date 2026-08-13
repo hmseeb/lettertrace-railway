@@ -79,6 +79,22 @@ else bad "runtime public config is delivered to the browser"; fi
 health=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/auth/v1/health")
 [ "$health" = "200" ] && ok "login service answers on /auth/v1" || bad "login service answers on /auth/v1" "got $health"
 
+# 3b. the router survives a signed-in session. Supabase splits its session into
+#     chunked cookies of ~3.5k, which exceed nginx's 4k/8k header defaults in
+#     both directions: the request that carries them back (400) and the app's
+#     Set-Cookie reply (502). This shipped broken once - every page 502'd the
+#     moment you logged in - so both halves are asserted here.
+fat=$(printf 'sb-auth-token.%s=%s; ' 0 "$(head -c 3500 < /dev/zero | tr '\0' 'x')" \
+                                    1 "$(head -c 3500 < /dev/zero | tr '\0' 'x')" \
+                                    2 "$(head -c 3500 < /dev/zero | tr '\0' 'x')")
+fatcode=$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: $fat" "$BASE/login")
+case "$fatcode" in 400|502) bad "router accepts session-sized cookies" "got $fatcode";;
+                        *) ok "router accepts session-sized cookies";; esac
+
+if docker exec "$APP" grep -q 'proxy_buffer_size' /etc/nginx/nginx.conf 2>/dev/null
+then ok "router has room for session-sized reply headers"
+else bad "router has room for session-sized reply headers" "proxy_buffer_size missing from nginx.conf"; fi
+
 # 4. a stranger can create an account and is signed in immediately
 EMAIL="contract-$RANDOM@example.com"
 # Taken from the page the browser gets, which is the only place it is published
