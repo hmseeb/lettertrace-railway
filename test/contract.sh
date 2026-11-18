@@ -166,6 +166,15 @@ klen=$(docker exec "$APP" node -e '
   }' 2>/dev/null)
 [ "$klen" = "32" ] && ok "the at-rest key decodes to 32 bytes" || bad "the at-rest key decodes to 32 bytes" "got ${klen:-nothing}"
 
+# 11. a self-hosted deployment reports nothing to upstream's company analytics.
+#     Upstream's landing page mounts LetterCoTelemetry, which boots PostHog with
+#     a key hardcoded in the source (not env-gated like the rest of its
+#     telemetry), so every visitor to a deployer's "/" would be sent to
+#     letterstory's funnel project. The image strips it at build time.
+leak=$(docker exec "$APP" sh -c "grep -rlE 'phc_zVtjM42|marketing_site' /app/.next /app/server.js 2>/dev/null | head -3")
+[ -z "$leak" ] && ok "no upstream company telemetry ships in the bundle" \
+               || bad "no upstream company telemetry ships in the bundle" "found in: $leak"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ] || exit 1

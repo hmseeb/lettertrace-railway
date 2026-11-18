@@ -16,8 +16,8 @@
 # Postgres is NOT in here. Railway has a first-class Postgres service and the
 # data must outlive the app container.
 
-ARG LETTERTRACE_REF=061bb2d8a027f76e4b51a0969f4c9ca8628bad84
-ARG GOTRUE_VERSION=v2.177.0
+ARG LETTERTRACE_REF=cdc7fcc823bcb82a49f8048aa20da5f1a6e0e112
+ARG GOTRUE_VERSION=v2.198.0
 ARG POSTGREST_VERSION=v12.2.12
 
 # ---------------------------------------------------------------- base runtime
@@ -45,6 +45,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/*
 
 RUN npm ci
+# Upstream's landing page mounts LetterCoTelemetry, which boots PostHog with a
+# key hardcoded in the source and reports every visitor to letterstory's own
+# company-funnel project. Every other telemetry path upstream ships is env-gated
+# and inert when self-hosted; this one is not, so it is replaced with a no-op
+# here. The grep fails the build if upstream ever hardcodes another PostHog key,
+# rather than letting it ship silently.
+RUN test -f components/letterco-telemetry.tsx \
+ && printf '"use client";\n\n// Stripped for self-hosting: see the Railway image Dockerfile.\nexport function LetterCoTelemetry() {\n  return null;\n}\n' \
+      > components/letterco-telemetry.tsx \
+ && ! grep -rnE 'phc_[A-Za-z0-9]{20,}' app components lib
 # No NEXT_PUBLIC_* build args, same reason upstream refuses them: they would be
 # inlined into the browser bundle and silently override what we set at boot.
 ENV NEXT_TELEMETRY_DISABLED=1

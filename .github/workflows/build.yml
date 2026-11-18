@@ -33,7 +33,7 @@ jobs:
           # for nobody.
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/lettertrace-railway:0.1.0-r3
+            ghcr.io/${{ github.repository_owner }}/lettertrace-railway:0.1.0-r4
             ghcr.io/${{ github.repository_owner }}/lettertrace-railway:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
