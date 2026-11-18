@@ -67,7 +67,8 @@ try {
   nav ? ok("the signed-in dashboard renders its navigation")
       : bad("the signed-in dashboard renders its navigation");
 
-  const wizard = await page.getByText(/set up your brand/i).count();
+  // Upstream #169 turned the form into a URL-first flow; accept either copy.
+  const wizard = await page.getByText(/what.s your website|set up your brand/i).count();
   wizard ? ok("a brand new account is shown the setup wizard")
          : bad("a brand new account is shown the setup wizard");
 
